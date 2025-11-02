@@ -1,6 +1,7 @@
 # Fork for inoffical (!) TrueNAS Integration of realtek-r8125-dkms
 
 # Howto for TrueNAS
+# Works fine for 25.10.0 (Goldeneye) and 25.04 (Fangtooth)
 
 * Disable rootfs protection and activate apt/dpkg for dkms driver package install
 ```bash
