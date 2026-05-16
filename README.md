@@ -1,230 +1,79 @@
-# Fork for inoffical (!) TrueNAS Integration of realtek-r8125-dkms
+# TrueNAS SCALE Realtek r8125 DKMS helper
 
-# Howto for TrueNAS
-# Works fine for 25.10.0 (Goldeneye) and 25.04 (Fangtooth)
+Unofficial fork: packages the Realtek `r8125` DKMS driver and a helper that survives TrueNAS boot-environment updates. Install once; after updates, a **PREINIT** task rebuilds or reloads `r8125` before normal networking when possible.
 
-* Disable rootfs protection and activate apt/dpkg for dkms driver package install
+**Tested on:** not yet verified on hardware.
+
+## Quick start
+
+From a clone of this repo:
+
+```bash
+sudo bash r8125-posthook.sh --install
+sudo reboot
+sudo bash /data/scripts/r8125-posthook.sh --check
+```
+
+`--check` prints **READY** when the system is prepared for a WebUI update, or **NOT READY** with what to fix.
+
+## Commands
+
+| Command | Purpose |
+|--------|---------|
+| `sudo bash r8125-posthook.sh --install` | One-time setup (from repo) |
+| `sudo bash /data/scripts/r8125-posthook.sh --check` | Diagnostics only |
+| `sudo bash /data/scripts/r8125-posthook.sh` | Manual repair (same as PREINIT) |
+| `sudo bash /data/scripts/r8125-posthook.sh --refresh-cache` | Refresh offline deps (same as SHUTDOWN task) |
+
+`--install` copies the script to `/data/scripts/`, downloads the release `.deb`, caches DKMS build dependencies under `/data/scripts/r8125-offline-debs/` (headers for every installed kernel), blacklists `r8169`, installs the package, updates initramfs, loads `r8125`, and registers TrueNAS **Command** tasks at **PREINIT** and **SHUTDOWN**:
+
+```bash
+/bin/bash /data/scripts/r8125-posthook.sh
+```
+
+If `midclt` registration fails, add under **System Settings → Advanced → Init/Shutdown Scripts** (Type **Command**, not Script):
+
+| When | Timeout | Command |
+|------|---------|---------|
+| Pre Init | 600 | `/bin/bash /data/scripts/r8125-posthook.sh` |
+| Shutdown | 900 | `/bin/bash /data/scripts/r8125-posthook.sh --refresh-cache` |
+
+`--install` also removes legacy `/etc/systemd/system/r8125-posthook.service` if it exists.
+
+**Already set up?** Re-run `--install` once while online so the script on `/data/scripts/` picks up the SHUTDOWN cache task, 600s PREINIT timeout, and multi-kernel offline headers cache.
+
+## After TrueNAS updates
+
+TrueNAS updates ship a **new kernel** in a new boot environment. `/data` (script, driver `.deb`, offline deps) survives; rootfs packages do not. This helper is built for that:
+
+1. **SHUTDOWN** (before reboot) — Refreshes `/data/scripts/r8125-offline-debs/` with DKMS build deps and `linux-headers` for every kernel visible on the system (`/lib/modules`, installed `linux-image-*` packages, and headers already downloaded into `/var/cache/apt/archives/` after a WebUI update). Reboot for the update **after** that shutdown runs so the new kernel’s headers are on `/data`.
+2. **PREINIT** (first boot on the new kernel) — Offline repair: blacklist `r8169`, reinstall deps and driver from cache, DKMS-build for the running kernel, load `r8125` (no GitHub or `apt-get`).
+
+Run `--check` before applying a WebUI update; it should be **READY** (cached headers for each kernel version the script knows about). If repair still fails, see `/var/log/r8125-posthook.log`.
+
+## Manual steps (reference)
+
 ```bash
 sudo /usr/local/libexec/disable-rootfs-protection
-```
-
-* Blacklist of r8169 realtek driver, because its loading wrong
-```bash
-sudo echo "blacklist r8169" > /etc/modprobe.d/blacklist-r8169.conf
-```
-* Download latest debian dkms realtek driver package from github:
-
-Example:
-[https://github.com/awesometic/realtek-r8125-dkms/releases](https://github.com/awesometic/realtek-r8125-dkms/releases)
-
-* Update Packages List - because TrueNAS Scale Appliance Image doesnt have it:
-````bash
+sudo mount -o remount,rw /
+echo -e "# Prefer r8125.\nblacklist r8169" | sudo tee /etc/modprobe.d/blacklist-r8169.conf
 sudo apt-get update
-````
-
-* Because of maybe "sudo: argv[2] mismatch" - you have to enable diable sudo intercept_verify:
-
-````bash
-sudo visudo
-````
-Add:
-````bash
-Defaults !intercept_verify
-````
-Please remove this sudo setting after driver is build - installed and working!
-
-* Installing dkms driver package + other dependencies (I got network up and running over USB-LAN Adapter)
-````bash
 sudo dpkg -i realtek-r8125-dkms_9.016.01-1_amd64.deb
-````
-
-* If errors happen, maybe fix broken
-````bash
 sudo apt install --fix-broken
-````
-
-* Also required - because of the blacklist r8169 driver - initramfs update!
-````bash
-sudo update-initramfs -u
-````
-and Just reboot!
-
-Thats all - the cheap internal realtek card is finally working, also with 2,5GBIT:
-
-````bash
-root@truenas[~]# ethtool enp6s0
-Settings for enp6s0:
-        Supported ports: [ TP ]
-        Supported link modes:   10baseT/Half 10baseT/Full
-                                100baseT/Half 100baseT/Full
-                                1000baseT/Full
-                                2500baseT/Full
-        Supported pause frame use: Symmetric Receive-only
-        Supports auto-negotiation: Yes
-        Supported FEC modes: Not reported
-        Advertised link modes:  10baseT/Half 10baseT/Full
-                                100baseT/Half 100baseT/Full
-                                1000baseT/Full
-                                2500baseT/Full
-        Advertised pause frame use: Symmetric Receive-only
-        Advertised auto-negotiation: Yes
-        Advertised FEC modes: Not reported
-        Link partner advertised link modes:  10baseT/Half 10baseT/Full
-                                             100baseT/Half 100baseT/Full
-                                             1000baseT/Full
-                                             2500baseT/Full
-        Link partner advertised pause frame use: Symmetric
-        Link partner advertised auto-negotiation: Yes
-        Link partner advertised FEC modes: Not reported
-        Speed: 2500Mb/s
-        Duplex: Full
-        Auto-negotiation: on
-        Port: Twisted Pair
-        PHYAD: 0
-        Transceiver: internal
-        MDI-X: on
-        Supports Wake-on: pumbg
-        Wake-on: d
-        Current message level: 0x00000033 (51)
-                               drv probe ifdown ifup
-        Link detected: yes
-````
-
-This needs to be done after each TrueNAS Scale Upgrade! I provide soon a prehook script, which should be useful to do manual tasks after upgrades!
-
-Have Fun with TrueNAS!
-
-# Realtek r8125 DKMS
-
-![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/awesometic/realtek-r8125-dkms?sort=semver&style=for-the-badge)
-
-This provides Realtek r8125 driver in DKMS way so that you can keep the latest driver even after the kernel upgrade.
-
-## Before use
-
-This DKMS package is for Realtek RTL8125 (r8125 in module name) Ethernet, which is designed for the PCI interface.
-
-If you are searching for the Realtek 2.5 Gbits **USB Ethernet**, which may use RTL8156 (r8152 in module name), you are in the wrong place. Please refer to another DKMS project for that Realtek driver.
-
-- [Realtek R8152 DKMS](https://github.com/awesometic/realtek-r8152-dkms)
-
-## Installation
-
-There are 3 ways to install this DKMS module. Choose one as your tastes.
-
-Those are not interfering with each other. So you can do all 3 methods but absolutely you don't need to.
-
-Installation using the Debian package is recommended for the sake of getting the newer driver.
-
-### Debian package
-
-#### Released package file
-
-Download the latest Debian package from the Release tab on the Github repository.
-
-Then enter the following command.
-
-```bash
-sudo dpkg -i realtek-r8125-dkms*.deb
+sudo update-initramfs -u && sudo reboot
 ```
 
-> If multiple files selected by the wild card, you should type the specific version of the file.
->
-> ```bash
-> sudo dpkg -i realtek-r8125-dkms_9.016.01-1_amd64.deb
-> ```
-
-If dependency error occurs, try to fix that with `apt` command.
-
-```bash
-sudo apt install --fix-broken
-```
-
-#### Launchpad PPA (Recommended)
-
-Add the Launchpad PPA.
-
-```bash
-sudo add-apt-repository ppa:awesometic/ppa
-```
-
-Then install the package using `apt` tool.
-
-```bash
-sudo apt install realtek-r8125-dkms
-```
-
-### autorun.sh
-
-Using the `autorun.sh` script that Realtek provides on their original driver package. This is **not installed as a DKMS**, only efforts to the current kernel.
-
-Download or clone this repository and move to the extracted directory, then run the script.
-
-```bash
-sudo ./autorun.sh
-```
-
-### dkms-install.sh
-
-This script is from aircrack-ng team. You can install the DKMS module by a simple command.
-
-Download or clone this repository and move to the extracted directory, then run the script.
-
-```bash
-sudo ./dkms-install.sh
-```
-
-## Verify the module is loaded successfully
-
-After installing the DKMS package, you may not be able to use the new `r8125` module on the fly. This because the existing `r8169` module will be loaded priority to `r8125` so that it prevents working of the `r8125` module.
-
-Check if the `r8169` module loaded currently.
-
-```bash
-lsmod | grep -i r8169
-```
-
-If there is a result, maybe the `r8125` module wasn't loaded properly. You can check out modules currently in use via `lspci -k` or `dmesg` too.
-
-To use the `r8125` module explicitly you can add the `r8169` module to not be loaded by adding it to a blacklist file.
-
-Enter the following command to configure the blacklist.
-
-```bash
-sudo tee -a /etc/modprobe.d/blacklist-r8169.conf > /dev/null <<EOT
-# To use r8125 driver explicitly
-blacklist r8169
-EOT
-```
-
-To apply the new blacklist to your kernel, update your initramfs via
-
-```bash
-sudo update-initramfs -u
-```
-
-Finally, reboot to take effect.
-
-> - If you need to load both r8169 and r8125, maybe removing r8125 firmware could make it work. Please enter `sudo rm -f /lib/firmware/rtl_nic/rtl8125*` to remove all the r8125 firmwares on the system. But it is just a workaround, you should have to do this every time installing the new kernel version or new Linux firmware.
-> - In the case of the Debian package, I will update the scripts to make it do this during the installation.
-
-## Debian package build
-
-You can build yourself this after installing some dependencies including `dkms`.
+## Build `.deb`
 
 ```bash
 sudo apt install devscripts debmake debhelper build-essential dkms dh-dkms
-```
-
-```bash
 dpkg-buildpackage -b -rfakeroot -us -uc
 ```
 
-## LICENSE
+Tags trigger [GitHub Actions](.github/workflows/build-deb.yml) to publish the release `.deb`.
 
-GPL-2 on Realtek driver and the debian packaing.
+## Links
 
-## References
-
-- [Realtek r8125 driver release page](https://www.realtek.com/Download/List?cate_id=584)
-- [ParrotSec's realtek-rtl88xxau-dkms, where got hint from](https://github.com/ParrotSec/realtek-rtl88xxau-dkms)
+- [torsten-online notes](https://github.com/torsten-online/truenas-realtek-r8125-dkms)
+- [awesometic realtek-r8125-dkms](https://github.com/awesometic/realtek-r8125-dkms)
+- [Init/Shutdown API](https://api.truenas.com/v25.10.0/api_methods_initshutdownscript.create.html)
