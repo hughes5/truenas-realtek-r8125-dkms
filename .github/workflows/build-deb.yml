@@ -1,0 +1,53 @@
+name: Build Debian package
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential devscripts debhelper dh-dkms dkms fakeroot dpkg-dev git
+
+      - name: Build Debian package
+        run: |
+          dpkg-buildpackage -b -rfakeroot -us -uc
+          mkdir -p artifacts
+          cp ../*.deb artifacts/
+
+      - name: Upload built package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-package
+          path: artifacts/*.deb
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download built package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deb-package
+          path: artifacts
+
+      - name: Create GitHub release and upload .deb
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*.deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
